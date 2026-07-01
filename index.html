@@ -219,9 +219,6 @@
         <span>Signed in as <span class="who" id="currentUserLabel">&mdash;</span></span>
         <button class="btn ghost small" id="switchUserBtn">Switch user</button>
       </div>
-      <button class="btn ghost small" id="exportBtn">Export backup</button>
-      <button class="btn ghost small" id="importBtn">Import backup</button>
-      <input type="file" id="importFile" class="file-input" accept=".json">
       <button class="btn accent" id="addLaborerBtn">+ Add Laborer</button>
     </div>
   </header>
@@ -1106,44 +1103,6 @@
       }, extraOptions)
     });
   }
-
-  // ---------- Export / Import (laborer roster only — accounts live in Supabase Auth) ----------
-  document.getElementById('exportBtn').addEventListener('click', ()=>{
-    const blob = new Blob([JSON.stringify({ laborers }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'labor-pool-backup-' + new Date().toISOString().slice(0,10) + '.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-  document.getElementById('importBtn').addEventListener('click', ()=>{
-    document.getElementById('importFile').click();
-  });
-  document.getElementById('importFile').addEventListener('change', (e)=>{
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const parsed = JSON.parse(reader.result);
-        if (parsed && Array.isArray(parsed.laborers)){
-          const rows = parsed.laborers.map(laborerToRow);
-          const { error } = await supabase.from('laborers').insert(rows);
-          if (error){ toast('Could not import: ' + error.message); return; }
-          await loadLaborers();
-          renderAll();
-          toast('Backup imported');
-        } else {
-          toast('Invalid backup file');
-        }
-      } catch(err){
-        toast('Could not read file');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  });
 
   // ---------- Labor Finder ----------
   function titleKey(t){ return t.replace(/\s+/g,'_'); }
