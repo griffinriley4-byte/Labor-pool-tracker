@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Labor Pool Tracker",
+  "schemaVersion": 1,
+  "description": "Labor Pool Tracker for Simpson Plastering: laborer profiles (contact, trades, job history, reviews/star ratings, English, location, travel radius, hourly rate, last boss) with a dashboard of pool-wide KPIs (active count, avg rating, avg rate, English %, travel-ready %, repeat-hire %, trade distribution, top rated, needs-review). Data is entered manually and stored in a Supabase database; sign-in via Supabase Auth."
+}
+</script>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Labor Pool Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --navy: #1c2d42;
+    --navy-light: #2d4463;
+    --accent: #c9762c;
+    --accent-light: #f2e2cf;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --text: #1f2430;
+    --text-muted: #6b7280;
+    --green: #2f9e58;
+    --red: #d0483a;
+    --yellow: #e0a500;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .app { max-width: 1280px; margin: 0 auto; padding: 20px 24px 60px; }
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+  }
+  header.top h1 { font-size: 22px; margin: 0; color: var(--navy); }
+  header.top .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    background: none; border: none; padding: 10px 16px; font-size: 14px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab-btn.active { color: var(--navy); border-bottom-color: var(--accent); }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .btn {
+    background: var(--navy); color: #fff; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: var(--navy-light); }
+  .btn.accent { background: var(--accent); }
+  .btn.accent:hover { background: #b3651f; }
+  .btn.ghost { background: none; color: var(--navy); border: 1px solid var(--border); }
+  .btn.ghost:hover { background: #f0f1f3; }
+  .btn.danger { background: none; color: var(--red); border: 1px solid var(--border); }
+  .btn.small { padding: 5px 10px; font-size: 12px; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  }
+  .kpi-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: 600; }
+  .kpi-card .value { font-size: 26px; font-weight: 700; color: var(--navy); margin-top: 4px; }
+  .kpi-card .value.small { font-size: 20px; }
+  .kpi-card .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 12px; font-size: 14px; color: var(--navy); }
+  .chart-wrap { position: relative; height: 220px; }
+
+  .list-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .list-row:last-child { border-bottom: none; }
+  .list-row .name { font-weight: 600; }
+  .list-row .meta { color: var(--text-muted); font-size: 12px; }
+  .stars { color: var(--yellow); letter-spacing: 1px; white-space: nowrap; }
+  .empty-note { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type=text], .toolbar select {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff;
+  }
+  .toolbar .spacer { flex: 1; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted);
+    padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  thead th:hover { color: var(--navy); }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #fafbfc; cursor: pointer; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge.active { background: #e4f5ea; color: var(--green); }
+  .badge.available { background: #fff3d9; color: #96700a; }
+  .badge.inactive { background: #f1f2f4; color: var(--text-muted); }
+  .trade-tag { display: inline-block; background: var(--accent-light); color: #8a4f16; border-radius: 12px; padding: 1px 8px; font-size: 11px; margin-right: 4px; }
+
+  .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { border-radius: 0; }
+
+  /* Modal */
+  .overlay {
+    display: none; position: fixed; inset: 0; background: rgba(20,25,35,.45); z-index: 50;
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 30px 16px;
+  }
+  .overlay.active { display: flex; }
+  .modal { background: #fff; border-radius: 12px; width: 100%; max-width: 720px; padding: 24px; margin-bottom: 30px; }
+  .modal h2 { margin: 0 0 4px; font-size: 19px; color: var(--navy); }
+  .modal .close-x { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }
+  .form-grid.full { grid-template-columns: 1fr; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.span-2 { grid-column: span 2; }
+  .field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .field input, .field select, .field textarea {
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  .field textarea { resize: vertical; min-height: 50px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .trade-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+  .trade-checks label {
+    border: 1px solid var(--border); border-radius: 16px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .trade-checks label.checked { background: var(--accent-light); border-color: var(--accent); }
+  .section-title { font-size: 13px; font-weight: 700; color: var(--navy); margin: 20px 0 8px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .modal-actions { display: flex; justify-content: space-between; margin-top: 22px; }
+  .modal-actions .right { display: flex; gap: 8px; }
+
+  .review-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .review-item .rhead { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .job-item { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+
+  .star-picker { display: flex; gap: 4px; }
+  .star-picker button { background: none; border: none; font-size: 20px; color: #d8dade; cursor: pointer; padding: 0; }
+  .star-picker button.on { color: var(--yellow); }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .empty-state .btn { margin-top: 14px; }
+
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; background: var(--navy); color: #fff; padding: 10px 16px;
+    border-radius: 8px; font-size: 13px; opacity: 0; transform: translateY(8px); transition: all .25s; pointer-events: none; z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .file-input { display: none; }
+
+  .crew-input-row {
+    display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; background: #fff;
+  }
+  .crew-input-row input[type=number] {
+    width: 70px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 13px;
+  }
+  .need-badge { padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+  .need-badge.ok { background: #e4f5ea; color: var(--green); }
+  .need-badge.short { background: #fdeceb; color: var(--red); }
+  .finder-group { margin-bottom: 18px; }
+  .finder-group .fg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .finder-group .fg-head h4 { margin: 0; font-size: 14px; color: var(--navy); }
+  .finder-row {
+    display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; background: #fff;
+  }
+  .finder-row:hover { background: #fafbfc; }
+  .finder-row .fr-left { display: flex; flex-direction: column; gap: 3px; }
+  .local-badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #e7f0ff; color: #2457b3; margin-left: 6px; white-space: nowrap; }
+  .travel-badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #fff3d9; color: #96700a; margin-left: 6px; white-space: nowrap; }
+  .finder-excluded { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .badge.admin { background: #ece3fb; color: #6b3fbf; }
+  .badge.pm_gs { background: #dcecfb; color: #1f5f96; }
+  .badge.superintendent { background: #f1f2f4; color: var(--text-muted); }
+  .user-bar { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted); }
+  .user-bar .who { font-weight: 600; color: var(--navy); }
+  #signInOverlay {
+    background: linear-gradient(135deg, var(--navy) 0%, #0f1a29 100%);
+    align-items: center; z-index: 200; padding: 20px;
+  }
+  .login-card {
+    background: #fff; border-radius: 14px; width: 100%; max-width: 400px;
+    padding: 40px 36px 32px; box-shadow: 0 25px 60px rgba(0,0,0,.35);
+  }
+  .login-logo {
+    width: 52px; height: 52px; border-radius: 12px; background: var(--accent);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font-weight: 800; font-size: 20px; letter-spacing: .02em; margin: 0 auto 20px;
+  }
+  .login-card h1 { text-align: center; font-size: 20px; margin: 0 0 2px; color: var(--navy); }
+  .login-card .brand-sub { text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 22px; }
+  .login-footer { text-align: center; color: rgba(255,255,255,.6); font-size: 12px; margin-top: 22px; }
+  .auth-error { color: var(--red); font-size: 12px; margin-top: 8px; }
+  .auth-switch { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 18px; }
+  .auth-switch a { color: var(--accent); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .auth-switch a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Labor Pool Tracker</h1>
+      <div class="sub">Simpson Plastering &mdash; laborer roster, performance &amp; availability</div>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <div class="user-bar">
+        <span>Signed in as <span class="who" id="currentUserLabel">&mdash;</span></span>
+        <button class="btn ghost small" id="switchUserBtn">Switch user</button>
+      </div>
+      <button class="btn ghost small" id="exportBtn">Export backup</button>
+      <button class="btn ghost small" id="importBtn">Import backup</button>
+      <input type="file" id="importFile" class="file-input" accept=".json">
+      <button class="btn accent" id="addLaborerBtn">+ Add Laborer</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-view="dashboard">Dashboard</button>
+    <button class="tab-btn" data-view="laborers">Laborers</button>
+    <button class="tab-btn" data-view="finder">Labor Finder</button>
+    <button class="tab-btn" data-view="access">Access</button>
+  </div>
+
+  <div class="view active" id="view-dashboard">
+    <div class="kpi-grid" id="kpiGrid"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Laborers by trade</h3>
+        <div class="chart-wrap"><canvas id="tradeChart"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Rating distribution (active pool)</h3>
+        <div class="chart-wrap"><canvas id="ratingChart"></canvas></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Top rated (active &amp; available)</h3>
+        <div id="topRatedList"></div>
+      </div>
+      <div class="card">
+        <h3>Needs attention</h3>
+        <div id="needsAttentionList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-laborers">
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search name, location, last boss...">
+      <select id="filterTrade"><option value="">All trades</option></select>
+      <select id="filterTitle">
+        <option value="">All titles</option>
+        <option value="Sub Boss">Sub Boss</option>
+        <option value="Foreman">Foreman</option>
+        <option value="Skilled Laborer">Skilled Laborer</option>
+        <option value="General Laborer">General Laborer</option>
+      </select>
+      <select id="filterStatus">
+        <option value="">All statuses</option>
+        <option value="active">Active</option>
+        <option value="available">Available</option>
+        <option value="inactive">Inactive</option>
+      </select>
+      <select id="filterTravel">
+        <option value="">Travel: any</option>
+        <option value="yes">Willing to travel</option>
+        <option value="no">Local only</option>
+      </select>
+      <select id="filterEnglish">
+        <option value="">English: any</option>
+        <option value="yes">Speaks English</option>
+        <option value="no">Does not</option>
+      </select>
+      <div class="spacer"></div>
+      <span class="empty-note" id="resultCount"></span>
+    </div>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="name">Name</th>
+            <th data-sort="title">Title</th>
+            <th data-sort="trades">Trade(s)</th>
+            <th data-sort="status">Status</th>
+            <th data-sort="rating">Rating</th>
+            <th data-sort="hourlyRate">Rate</th>
+            <th data-sort="location">Location</th>
+            <th data-sort="travel">Travel</th>
+            <th data-sort="english">English</th>
+            <th data-sort="lastBoss">Last Boss</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="emptyState" style="display:none;">
+      <div>No laborers in your pool yet.</div>
+      <button class="btn accent" id="addLaborerBtn2">+ Add your first laborer</button>
+    </div>
+  </div>
+
+  <div class="view" id="view-finder">
+    <div class="card" style="margin-bottom:18px;">
+      <h3>Project details</h3>
+      <div class="form-grid">
+        <div class="field"><label>Project name</label><input type="text" id="lf_project" placeholder="e.g. Maple Street Apartments"></div>
+        <div class="field"><label>Project location (city, state)</label><input type="text" id="lf_location" placeholder="e.g. Charlotte, NC"></div>
+        <div class="field"><label>Trade needed (optional)</label><select id="lf_trade"><option value="">Any trade</option></select></div>
+      </div>
+      <div class="form-grid full">
+        <div class="field">
+          <label>Crew needed &mdash; enter how many of each title</label>
+          <div id="lf_crewInputs"></div>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top:6px;">
+        <button class="btn ghost" id="lf_clearBtn">Clear</button>
+        <div class="right">
+          <button class="btn accent" id="lf_findBtn">Find Available Crew</button>
+        </div>
+      </div>
+    </div>
+    <div id="lf_results"></div>
+  </div>
+
+  <div class="view" id="view-access">
+    <div class="card" style="margin-bottom:18px;">
+      <h3>Invite new members</h3>
+      <div class="sub" style="color:var(--text-muted); font-size:12px; margin-bottom:14px;">
+        Only people whose email you invite here are able to create an account. Assign their role now &mdash;
+        it's applied automatically when they sign up. Admin sees everything; PM / General Superintendent sees
+        Dashboard, Laborers &amp; Labor Finder; Superintendent sees Dashboard &amp; Laborers only.
+      </div>
+      <div class="toolbar">
+        <div class="spacer"></div>
+        <button class="btn accent" id="addInviteBtn">+ Invite by email</button>
+      </div>
+      <div class="table-card">
+        <table>
+          <thead><tr><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+          <tbody id="invitesTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Active accounts</h3>
+      <div class="table-card">
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay active" id="signInOverlay">
+  <div>
+    <div class="login-card">
+      <div class="login-logo">SP</div>
+      <h1>Labor Pool Tracker</h1>
+      <div class="brand-sub">Simpson Plastering</div>
+
+      <div id="si_signinPanel">
+        <div class="form-grid full">
+          <div class="field"><label>Email</label><input type="email" id="si_email" placeholder="you@simpsonplastering.com" autocomplete="username"></div>
+          <div class="field"><label>Password</label><input type="password" id="si_password" autocomplete="current-password"></div>
+        </div>
+        <div id="si_error" class="auth-error" style="display:none;">Incorrect email or password. Try again.</div>
+        <button class="btn accent" id="si_submit" style="margin-top:18px; width:100%;">Sign in</button>
+        <div class="auth-switch">New here? <a href="#" id="si_toCreate">Create an account</a></div>
+      </div>
+
+      <div id="si_createPanel" style="display:none;">
+        <div class="form-grid full">
+          <div class="field"><label>Work email</label><input type="email" id="ca_email" placeholder="you@simpsonplastering.com" autocomplete="username"></div>
+          <div class="field"><label>Full name</label><input type="text" id="ca_name"></div>
+          <div class="field"><label>Password (6+ characters)</label><input type="password" id="ca_password" autocomplete="new-password"></div>
+          <div class="field"><label>Confirm password</label><input type="password" id="ca_confirm" autocomplete="new-password"></div>
+        </div>
+        <div id="ca_error" class="auth-error" style="display:none;"></div>
+        <button class="btn accent" id="ca_submit" style="margin-top:18px; width:100%;">Create account</button>
+        <div class="auth-switch">Already have an account? <a href="#" id="si_toSignin">Sign in</a></div>
+      </div>
+    </div>
+    <div class="login-footer">Internal tool &middot; account creation requires admin invitation</div>
+  </div>
+</div>
+
+<div class="overlay" id="inviteModalOverlay">
+  <div class="modal" style="max-width:400px;">
+    <button class="close-x" id="closeInviteModal">&times;</button>
+    <h2 id="inviteModalTitle">Invite by email</h2>
+    <div class="form-grid full">
+      <div class="field"><label>Email *</label><input type="email" id="inv_email"></div>
+      <div class="field">
+        <label>Role</label>
+        <select id="inv_role">
+          <option value="admin">Admin</option>
+          <option value="pm_gs">PM / General Superintendent</option>
+          <option value="superintendent" selected>Superintendent</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn danger" id="deleteInviteBtn" style="display:none;">Remove invite</button>
+      <div class="right">
+        <button class="btn ghost" id="cancelInviteBtn">Cancel</button>
+        <button class="btn accent" id="saveInviteBtn">Save invite</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="userModalOverlay">
+  <div class="modal" style="max-width:420px;">
+    <button class="close-x" id="closeUserModal">&times;</button>
+    <h2>Edit Account</h2>
+    <div class="form-grid full">
+      <div class="field"><label>Name</label><input type="text" id="u_name"></div>
+      <div class="field"><label>Email</label><input type="email" id="u_email" disabled style="background:#f4f5f7; color:var(--text-muted);"></div>
+      <div class="field">
+        <label>Role</label>
+        <select id="u_role">
+          <option value="admin">Admin</option>
+          <option value="pm_gs">PM / General Superintendent</option>
+          <option value="superintendent">Superintendent</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn danger" id="deleteUserBtn">Revoke access</button>
+      <div class="right">
+        <button class="btn ghost" id="cancelUserBtn">Cancel</button>
+        <button class="btn accent" id="saveUserBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="close-x" id="closeModal">&times;</button>
+    <h2 id="modalTitle">Add Laborer</h2>
+    <div class="sub" style="color:var(--text-muted); font-size:12px;">Fields marked * are required</div>
+
+    <div class="form-grid">
+      <div class="field"><label>Name *</label><input type="text" id="f_name"></div>
+      <div class="field"><label>Phone</label><input type="text" id="f_phone"></div>
+      <div class="field"><label>Email</label><input type="text" id="f_email"></div>
+      <div class="field"><label>Location (city, state)</label><input type="text" id="f_location"></div>
+      <div class="field"><label>Hourly Rate ($)</label><input type="number" step="0.5" id="f_rate"></div>
+      <div class="field">
+        <label>Last Boss</label>
+        <input type="text" id="f_lastBossName" placeholder="Name">
+      </div>
+      <div class="field">
+        <label>Last Boss Type</label>
+        <select id="f_lastBossType">
+          <option value="company">Company</option>
+          <option value="sub-boss">Sub-boss</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="f_status">
+          <option value="available">Available</option>
+          <option value="active">Actively working for us</option>
+          <option value="inactive">Inactive / do not use</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Title</label>
+        <select id="f_title">
+          <option value="Sub Boss">Sub Boss</option>
+          <option value="Foreman">Foreman</option>
+          <option value="Skilled Laborer">Skilled Laborer</option>
+          <option value="General Laborer">General Laborer</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-grid full">
+      <div class="field">
+        <label>Trade(s) &mdash; select up to 2</label>
+        <div class="trade-checks" id="tradeChecks"></div>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label>Speaks English?</label>
+        <select id="f_english"><option value="yes">Yes</option><option value="no">No</option></select>
+      </div>
+      <div class="field">
+        <label>Willing to travel for work?</label>
+        <select id="f_travel"><option value="no">No</option><option value="yes">Yes</option></select>
+      </div>
+      <div class="field" id="f_travelDistWrap" style="display:none;">
+        <label>Max travel distance (miles)</label>
+        <input type="number" id="f_travelDist">
+      </div>
+    </div>
+
+    <div class="section-title">Job history with us</div>
+    <div id="jobList"></div>
+    <div style="display:flex; gap:8px; margin-top:6px;">
+      <input type="text" id="newJobName" placeholder="Job / project name" style="flex:1; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
+      <button class="btn ghost small" id="addJobBtn">+ Add job</button>
+    </div>
+
+    <div class="section-title">Reviews</div>
+    <div id="reviewList"></div>
+    <button class="btn ghost small" id="addReviewBtn" style="margin-top:6px;">+ Add review</button>
+
+    <div class="form-grid full">
+      <div class="field">
+        <label>Notes</label>
+        <textarea id="f_notes"></textarea>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn danger" id="deleteBtn" style="display:none;">Delete laborer</button>
+      <div class="right">
+        <button class="btn ghost" id="cancelBtn">Cancel</button>
+        <button class="btn accent" id="saveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="reviewOverlay">
+  <div class="modal" style="max-width:480px;">
+    <button class="close-x" id="closeReviewModal">&times;</button>
+    <h2>Add Review</h2>
+    <div class="form-grid full" id="reviewQuestions"></div>
+    <div class="field" style="margin-top:10px;">
+      <label>Job / context (optional)</label>
+      <input type="text" id="rv_job">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Notes</label>
+      <textarea id="rv_notes"></textarea>
+    </div>
+    <div class="modal-actions">
+      <div></div>
+      <div class="right">
+        <button class="btn ghost" id="cancelReviewBtn">Cancel</button>
+        <button class="btn accent" id="saveReviewBtn">Save review</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const TRADES = ['Plastering','Stucco','Drywall','Framing','Painting','Masonry','Concrete','Electrical','Plumbing','HVAC','Roofing','Carpentry','Insulation','General Labor'];
+  const TITLES = ['Sub Boss','Foreman','Skilled Laborer','General Laborer'];
+  const ROLE_LABELS = { admin: 'Admin', pm_gs: 'PM / General Superintendent', superintendent: 'Superintendent' };
+  const TAB_ACCESS = {
+    admin: ['dashboard','laborers','finder','access'],
+    pm_gs: ['dashboard','laborers','finder'],
+    superintendent: ['dashboard','laborers']
+  };
+  let currentUser = null; // profiles row of the signed-in user: { id, name, email, role }
+  const REVIEW_QUESTIONS = [
+    { key: 'quality', label: 'Quality of work' },
+    { key: 'reliability', label: 'Reliability & punctuality' },
+    { key: 'communication', label: 'Communication' },
+    { key: 'safety', label: 'Safety compliance' },
+    { key: 'rehire', label: 'Would rehire' }
+  ];
+
+  const supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+  let laborers = [];
+  let invites = [];
+  let profiles = [];
+  let editingId = null; // laborer currently open in modal (null = new)
+  let workingJobs = [];
+  let workingReviews = [];
+  let sortState = { key: 'name', dir: 1 };
+  let charts = {};
+
+  // ---------- Supabase <-> app-shape mapping ----------
+  function rowToLaborer(r){
+    return {
+      id: r.id,
+      name: r.name,
+      phone: r.phone || '',
+      email: r.email || '',
+      location: r.location || '',
+      hourlyRate: r.hourly_rate,
+      lastBoss: { name: r.last_boss_name || '', type: r.last_boss_type || 'company' },
+      status: r.status,
+      title: r.title,
+      speaksEnglish: r.speaks_english,
+      travel: { willing: r.travel_willing, maxDistance: r.travel_max_distance },
+      trades: r.trades || [],
+      history: r.history || [],
+      reviews: r.reviews || [],
+      notes: r.notes || '',
+      dateAdded: r.date_added
+    };
+  }
+  function laborerToRow(l){
+    return {
+      name: l.name,
+      phone: l.phone,
+      email: l.email,
+      location: l.location,
+      hourly_rate: l.hourlyRate,
+      last_boss_name: l.lastBoss.name,
+      last_boss_type: l.lastBoss.type,
+      status: l.status,
+      title: l.title,
+      speaks_english: l.speaksEnglish,
+      travel_willing: l.travel.willing,
+      travel_max_distance: l.travel.maxDistance,
+      trades: l.trades,
+      history: l.history,
+      reviews: l.reviews,
+      notes: l.notes,
+      date_added: l.dateAdded
+    };
+  }
+  async function loadLaborers(){
+    const { data: rows, error } = await supabase.from('laborers').select('*').order('name');
+    if (error){ toast('Could not load laborers: ' + error.message); return; }
+    laborers = (rows || []).map(rowToLaborer);
+  }
+  async function loadInvitesAndProfiles(){
+    const [{ data: inviteRows, error: inviteErr }, { data: profileRows, error: profileErr }] = await Promise.all([
+      supabase.from('invites').select('*').order('email'),
+      supabase.from('profiles').select('*').order('name')
+    ]);
+    if (inviteErr){ toast('Could not load invites: ' + inviteErr.message); }
+    if (profileErr){ toast('Could not load accounts: ' + profileErr.message); }
+    invites = inviteRows || [];
+    profiles = profileRows || [];
+  }
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'), 2000);
+  }
+
+  function reviewAvg(r){
+    const vals = REVIEW_QUESTIONS.map(q => r[q.key]).filter(v => typeof v === 'number');
+    if (!vals.length) return null;
+    return vals.reduce((a,b)=>a+b,0) / vals.length;
+  }
+  function laborerRating(l){
+    const reviews = l.reviews || [];
+    const avgs = reviews.map(reviewAvg).filter(v => v != null);
+    if (!avgs.length) return null;
+    return avgs.reduce((a,b)=>a+b,0) / avgs.length;
+  }
+  function starString(rating){
+    if (rating == null) return '<span class="meta">No reviews</span>';
+    const rounded = Math.round(rating * 2) / 2;
+    let out = '';
+    for (let i=1;i<=5;i++){
+      if (rounded >= i) out += '★';
+      else if (rounded >= i - 0.5) out += '⯨';
+      else out += '☆';
+    }
+    return '<span class="stars">'+out+'</span> <span class="meta">'+rating.toFixed(1)+'</span>';
+  }
+
+  // ---------- Tabs ----------
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('view-'+btn.dataset.view).classList.add('active');
+      if (btn.dataset.view === 'dashboard') renderDashboard();
+      if (btn.dataset.view === 'access') renderAccessTab();
+    });
+  });
+
+  // ---------- Trade filter dropdown + trade checks ----------
+  function populateTradeFilter(){
+    const sel = document.getElementById('filterTrade');
+    sel.innerHTML = '<option value="">All trades</option>' + TRADES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  }
+  function renderTradeChecks(selected){
+    const wrap = document.getElementById('tradeChecks');
+    wrap.innerHTML = TRADES.map(t => {
+      const checked = selected.includes(t);
+      return `<label class="${checked?'checked':''}" data-trade="${t}"><input type="checkbox" style="display:none;" ${checked?'checked':''}> ${t}</label>`;
+    }).join('');
+    wrap.querySelectorAll('label').forEach(label => {
+      label.addEventListener('click', (e) => {
+        e.preventDefault();
+        const currentlyChecked = wrap.querySelectorAll('label.checked').length;
+        const isChecked = label.classList.contains('checked');
+        if (!isChecked && currentlyChecked >= 2){
+          toast('Max 2 trades per laborer');
+          return;
+        }
+        label.classList.toggle('checked');
+      });
+    });
+  }
+  function getSelectedTrades(){
+    return Array.from(document.querySelectorAll('#tradeChecks label.checked')).map(l => l.dataset.trade);
+  }
+
+  document.getElementById('f_travel').addEventListener('change', (e) => {
+    document.getElementById('f_travelDistWrap').style.display = e.target.value === 'yes' ? 'flex' : 'none';
+  });
+
+  // ---------- Modal open/close ----------
+  function openModal(laborer){
+    editingId = laborer ? laborer.id : null;
+    document.getElementById('modalTitle').textContent = laborer ? 'Edit Laborer' : 'Add Laborer';
+    document.getElementById('deleteBtn').style.display = laborer ? 'inline-block' : 'none';
+
+    document.getElementById('f_name').value = laborer ? laborer.name : '';
+    document.getElementById('f_phone').value = laborer ? laborer.phone||'' : '';
+    document.getElementById('f_email').value = laborer ? laborer.email||'' : '';
+    document.getElementById('f_location').value = laborer ? laborer.location||'' : '';
+    document.getElementById('f_rate').value = laborer ? (laborer.hourlyRate ?? '') : '';
+    document.getElementById('f_lastBossName').value = laborer ? (laborer.lastBoss && laborer.lastBoss.name) || '' : '';
+    document.getElementById('f_lastBossType').value = laborer && laborer.lastBoss ? laborer.lastBoss.type : 'company';
+    document.getElementById('f_status').value = laborer ? laborer.status : 'available';
+    document.getElementById('f_title').value = laborer ? (laborer.title || 'General Laborer') : 'General Laborer';
+    document.getElementById('f_english').value = laborer ? (laborer.speaksEnglish ? 'yes':'no') : 'yes';
+    document.getElementById('f_travel').value = laborer && laborer.travel && laborer.travel.willing ? 'yes' : 'no';
+    document.getElementById('f_travelDist').value = laborer && laborer.travel ? laborer.travel.maxDistance || '' : '';
+    document.getElementById('f_travelDistWrap').style.display = (laborer && laborer.travel && laborer.travel.willing) ? 'flex' : 'none';
+    document.getElementById('f_notes').value = laborer ? laborer.notes||'' : '';
+
+    renderTradeChecks(laborer ? (laborer.trades||[]) : []);
+
+    workingJobs = laborer ? JSON.parse(JSON.stringify(laborer.history||[])) : [];
+    workingReviews = laborer ? JSON.parse(JSON.stringify(laborer.reviews||[])) : [];
+    renderJobList();
+    renderReviewList();
+
+    document.getElementById('modalOverlay').classList.add('active');
+  }
+  function closeModal(){
+    document.getElementById('modalOverlay').classList.remove('active');
+    editingId = null;
+  }
+  document.getElementById('addLaborerBtn').addEventListener('click', ()=>openModal(null));
+  document.getElementById('addLaborerBtn2').addEventListener('click', ()=>openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+  document.getElementById('modalOverlay').addEventListener('click', (e)=>{ if (e.target.id==='modalOverlay') closeModal(); });
+
+  // ---------- Job history ----------
+  function renderJobList(){
+    const wrap = document.getElementById('jobList');
+    if (!workingJobs.length){
+      wrap.innerHTML = '<div class="empty-note">No prior jobs recorded.</div>';
+      return;
+    }
+    wrap.innerHTML = workingJobs.map((j,i)=>`
+      <div class="job-item">
+        <span>${escapeHtml(j.name)}</span>
+        <button class="btn ghost small" data-remove-job="${i}">Remove</button>
+      </div>
+    `).join('');
+    wrap.querySelectorAll('[data-remove-job]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        workingJobs.splice(Number(btn.dataset.removeJob),1);
+        renderJobList();
+      });
+    });
+  }
+  document.getElementById('addJobBtn').addEventListener('click', ()=>{
+    const input = document.getElementById('newJobName');
+    const val = input.value.trim();
+    if (!val) return;
+    workingJobs.push({ name: val, date: new Date().toISOString().slice(0,10) });
+    input.value = '';
+    renderJobList();
+  });
+
+  // ---------- Reviews ----------
+  function renderReviewList(){
+    const wrap = document.getElementById('reviewList');
+    if (!workingReviews.length){
+      wrap.innerHTML = '<div class="empty-note">No reviews yet.</div>';
+      return;
+    }
+    wrap.innerHTML = workingReviews.map((r,i)=>{
+      const avg = reviewAvg(r);
+      return `<div class="review-item">
+        <div class="rhead">
+          <span>${r.job ? escapeHtml(r.job)+' &mdash; ' : ''}${r.date||''}</span>
+          <span>${starString(avg)} <button class="btn ghost small" data-remove-review="${i}" style="margin-left:8px;">Remove</button></span>
+        </div>
+        <div class="meta">${REVIEW_QUESTIONS.map(q=>q.label+': '+(r[q.key]||'-')).join(' &nbsp;|&nbsp; ')}</div>
+        ${r.notes ? '<div style="margin-top:4px;">'+escapeHtml(r.notes)+'</div>' : ''}
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-remove-review]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        workingReviews.splice(Number(btn.dataset.removeReview),1);
+        renderReviewList();
+      });
+    });
+  }
+
+  let pendingReviewScores = {};
+  function openReviewModal(){
+    pendingReviewScores = {};
+    const wrap = document.getElementById('reviewQuestions');
+    wrap.innerHTML = REVIEW_QUESTIONS.map(q => `
+      <div class="field">
+        <label>${q.label}</label>
+        <div class="star-picker" data-qkey="${q.key}">
+          ${[1,2,3,4,5].map(n=>`<button type="button" data-val="${n}">★</button>`).join('')}
+        </div>
+      </div>
+    `).join('');
+    wrap.querySelectorAll('.star-picker').forEach(picker => {
+      const key = picker.dataset.qkey;
+      picker.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+          pendingReviewScores[key] = Number(b.dataset.val);
+          picker.querySelectorAll('button').forEach(bb => {
+            bb.classList.toggle('on', Number(bb.dataset.val) <= pendingReviewScores[key]);
+          });
+        });
+      });
+    });
+    document.getElementById('rv_job').value = '';
+    document.getElementById('rv_notes').value = '';
+    document.getElementById('reviewOverlay').classList.add('active');
+  }
+  document.getElementById('addReviewBtn').addEventListener('click', openReviewModal);
+  document.getElementById('closeReviewModal').addEventListener('click', ()=>document.getElementById('reviewOverlay').classList.remove('active'));
+  document.getElementById('cancelReviewBtn').addEventListener('click', ()=>document.getElementById('reviewOverlay').classList.remove('active'));
+  document.getElementById('reviewOverlay').addEventListener('click', (e)=>{ if (e.target.id==='reviewOverlay') document.getElementById('reviewOverlay').classList.remove('active'); });
+  document.getElementById('saveReviewBtn').addEventListener('click', ()=>{
+    if (Object.keys(pendingReviewScores).length === 0){
+      toast('Rate at least one question');
+      return;
+    }
+    const review = Object.assign({}, pendingReviewScores, {
+      job: document.getElementById('rv_job').value.trim(),
+      notes: document.getElementById('rv_notes').value.trim(),
+      date: new Date().toISOString().slice(0,10)
+    });
+    workingReviews.push(review);
+    renderReviewList();
+    document.getElementById('reviewOverlay').classList.remove('active');
+  });
+
+  // ---------- Save / delete laborer ----------
+  document.getElementById('saveBtn').addEventListener('click', async ()=>{
+    const name = document.getElementById('f_name').value.trim();
+    if (!name){ toast('Name is required'); return; }
+    const travelWilling = document.getElementById('f_travel').value === 'yes';
+    const laborer = {
+      name,
+      phone: document.getElementById('f_phone').value.trim(),
+      email: document.getElementById('f_email').value.trim(),
+      location: document.getElementById('f_location').value.trim(),
+      hourlyRate: parseFloat(document.getElementById('f_rate').value) || null,
+      lastBoss: {
+        name: document.getElementById('f_lastBossName').value.trim(),
+        type: document.getElementById('f_lastBossType').value
+      },
+      status: document.getElementById('f_status').value,
+      title: document.getElementById('f_title').value,
+      speaksEnglish: document.getElementById('f_english').value === 'yes',
+      travel: {
+        willing: travelWilling,
+        maxDistance: travelWilling ? (parseFloat(document.getElementById('f_travelDist').value) || null) : null
+      },
+      trades: getSelectedTrades(),
+      history: workingJobs,
+      reviews: workingReviews,
+      notes: document.getElementById('f_notes').value.trim(),
+      dateAdded: editingId ? (laborers.find(l=>l.id===editingId)||{}).dateAdded || new Date().toISOString().slice(0,10) : new Date().toISOString().slice(0,10)
+    };
+    const row = laborerToRow(laborer);
+    let error;
+    if (editingId){
+      ({ error } = await supabase.from('laborers').update(row).eq('id', editingId));
+    } else {
+      ({ error } = await supabase.from('laborers').insert(row));
+    }
+    if (error){ toast('Could not save: ' + error.message); return; }
+    await loadLaborers();
+    closeModal();
+    renderAll();
+    toast('Saved');
+  });
+  document.getElementById('deleteBtn').addEventListener('click', async ()=>{
+    if (!editingId) return;
+    const { error } = await supabase.from('laborers').delete().eq('id', editingId);
+    if (error){ toast('Could not delete: ' + error.message); return; }
+    await loadLaborers();
+    closeModal();
+    renderAll();
+    toast('Laborer removed');
+  });
+
+  // ---------- Table ----------
+  function getFiltered(){
+    const q = document.getElementById('searchInput').value.toLowerCase();
+    const tradeF = document.getElementById('filterTrade').value;
+    const titleF = document.getElementById('filterTitle').value;
+    const statusF = document.getElementById('filterStatus').value;
+    const travelF = document.getElementById('filterTravel').value;
+    const englishF = document.getElementById('filterEnglish').value;
+    return laborers.filter(l => {
+      if (q){
+        const hay = [l.name, l.location, l.lastBoss && l.lastBoss.name].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (tradeF && !(l.trades||[]).includes(tradeF)) return false;
+      if (titleF && l.title !== titleF) return false;
+      if (statusF && l.status !== statusF) return false;
+      if (travelF === 'yes' && !(l.travel && l.travel.willing)) return false;
+      if (travelF === 'no' && (l.travel && l.travel.willing)) return false;
+      if (englishF === 'yes' && !l.speaksEnglish) return false;
+      if (englishF === 'no' && l.speaksEnglish) return false;
+      return true;
+    });
+  }
+  function sortRows(rows){
+    const { key, dir } = sortState;
+    return rows.slice().sort((a,b)=>{
+      let av, bv;
+      switch(key){
+        case 'rating': av = laborerRating(a) ?? -1; bv = laborerRating(b) ?? -1; break;
+        case 'hourlyRate': av = a.hourlyRate ?? -1; bv = b.hourlyRate ?? -1; break;
+        case 'trades': av = (a.trades||[]).join(','); bv = (b.trades||[]).join(','); break;
+        case 'travel': av = a.travel && a.travel.willing ? 1:0; bv = b.travel && b.travel.willing ? 1:0; break;
+        case 'english': av = a.speaksEnglish?1:0; bv = b.speaksEnglish?1:0; break;
+        case 'lastBoss': av = (a.lastBoss&&a.lastBoss.name)||''; bv=(b.lastBoss&&b.lastBoss.name)||''; break;
+        default: av = (a[key]||''); bv = (b[key]||'');
+      }
+      if (typeof av === 'string') av = av.toLowerCase();
+      if (typeof bv === 'string') bv = bv.toLowerCase();
+      if (av < bv) return -1*dir;
+      if (av > bv) return 1*dir;
+      return 0;
+    });
+  }
+  function renderTable(){
+    let rows = sortRows(getFiltered());
+    const body = document.getElementById('tableBody');
+    document.getElementById('resultCount').textContent = rows.length + ' of ' + laborers.length + ' laborers';
+    document.getElementById('emptyState').style.display = laborers.length ? 'none' : 'block';
+    body.innerHTML = rows.map(l => `
+      <tr data-id="${l.id}">
+        <td><strong>${escapeHtml(l.name)}</strong></td>
+        <td>${escapeHtml(l.title)||'&mdash;'}</td>
+        <td>${(l.trades||[]).map(t=>`<span class="trade-tag">${escapeHtml(t)}</span>`).join('')}</td>
+        <td><span class="badge ${l.status}">${l.status}</span></td>
+        <td>${starString(laborerRating(l))}</td>
+        <td>${l.hourlyRate ? '$'+l.hourlyRate.toFixed(2) : '&mdash;'}</td>
+        <td>${escapeHtml(l.location)||'&mdash;'}</td>
+        <td>${l.travel && l.travel.willing ? 'Yes'+(l.travel.maxDistance?' ('+l.travel.maxDistance+'mi)':'') : 'No'}</td>
+        <td>${l.speaksEnglish ? 'Yes' : 'No'}</td>
+        <td>${escapeHtml(l.lastBoss && l.lastBoss.name)||'&mdash;'}</td>
+      </tr>
+    `).join('');
+    body.querySelectorAll('tr').forEach(tr=>{
+      tr.addEventListener('click', ()=>{
+        const l = laborers.find(x=>x.id===tr.dataset.id);
+        if (l) openModal(l);
+      });
+    });
+  }
+  document.querySelectorAll('thead th[data-sort]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sort;
+      if (sortState.key === key) sortState.dir *= -1;
+      else { sortState.key = key; sortState.dir = 1; }
+      renderTable();
+    });
+  });
+  ['searchInput','filterTrade','filterTitle','filterStatus','filterTravel','filterEnglish'].forEach(id=>{
+    document.getElementById(id).addEventListener('input', renderTable);
+    document.getElementById(id).addEventListener('change', renderTable);
+  });
+
+  // ---------- Dashboard ----------
+  function renderDashboard(){
+    const all = laborers;
+    const active = all.filter(l=>l.status==='active');
+    const available = all.filter(l=>l.status==='available');
+    const withRating = (arr) => arr.map(laborerRating).filter(v=>v!=null);
+    const avg = (arr) => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+
+    const activeAvgRating = avg(withRating(active));
+    const overallAvgRating = avg(withRating(all));
+    const activeAvgRate = avg(active.map(l=>l.hourlyRate).filter(v=>v!=null));
+    const englishPct = all.length ? Math.round(100*all.filter(l=>l.speaksEnglish).length/all.length) : 0;
+    const travelPct = all.length ? Math.round(100*all.filter(l=>l.travel&&l.travel.willing).length/all.length) : 0;
+    const repeatPct = all.length ? Math.round(100*all.filter(l=>(l.history||[]).length>0).length/all.length) : 0;
+    const now = new Date();
+    const newThisMonth = all.filter(l=>{
+      if (!l.dateAdded) return false;
+      const d = new Date(l.dateAdded);
+      return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+    }).length;
+
+    const kpis = [
+      { label: 'Total in pool', value: all.length, sub: available.length+' available' },
+      { label: 'Actively working', value: active.length, sub: all.length? Math.round(100*active.length/all.length)+'% of pool':'' },
+      { label: 'Active pool avg rating', value: activeAvgRating!=null ? activeAvgRating.toFixed(1)+' ★' : '—', sub: 'overall pool: '+(overallAvgRating!=null?overallAvgRating.toFixed(1)+' ★':'—') },
+      { label: 'Avg rate (active)', value: activeAvgRate!=null ? '$'+activeAvgRate.toFixed(2)+'/hr' : '—', sub: 'currently working laborers' },
+      { label: 'Speak English', value: englishPct+'%', sub: 'of full pool' },
+      { label: 'Travel-ready', value: travelPct+'%', sub: 'willing to travel for work' },
+      { label: 'Repeat hires', value: repeatPct+'%', sub: 'have worked for us before' },
+      { label: 'New this month', value: newThisMonth, sub: 'added in '+now.toLocaleString('default',{month:'long'}) }
+    ];
+    document.getElementById('kpiGrid').innerHTML = kpis.map(k=>`
+      <div class="kpi-card">
+        <div class="label">${k.label}</div>
+        <div class="value ${String(k.value).length>6?'small':''}">${k.value}</div>
+        <div class="sub">${k.sub}</div>
+      </div>
+    `).join('');
+
+    // Trade distribution chart
+    const tradeCounts = {};
+    all.forEach(l => (l.trades||[]).forEach(t => tradeCounts[t] = (tradeCounts[t]||0)+1));
+    const tradeLabels = Object.keys(tradeCounts).sort((a,b)=>tradeCounts[b]-tradeCounts[a]);
+    renderChart('tradeChart', 'bar', {
+      labels: tradeLabels,
+      datasets: [{ label: 'Laborers', data: tradeLabels.map(t=>tradeCounts[t]), backgroundColor: '#c9762c' }]
+    }, { indexAxis: 'y' });
+
+    // Rating distribution chart (active pool)
+    const buckets = ['<2','2-3','3-4','4-5'];
+    const bucketCounts = [0,0,0,0];
+    withRating(active).forEach(r=>{
+      if (r<2) bucketCounts[0]++;
+      else if (r<3) bucketCounts[1]++;
+      else if (r<4) bucketCounts[2]++;
+      else bucketCounts[3]++;
+    });
+    renderChart('ratingChart', 'bar', {
+      labels: buckets,
+      datasets: [{ label: 'Laborers', data: bucketCounts, backgroundColor: '#1c2d42' }]
+    }, {});
+
+    // Top rated
+    const topRated = all.filter(l=>laborerRating(l)!=null && l.status!=='inactive')
+      .sort((a,b)=>laborerRating(b)-laborerRating(a)).slice(0,5);
+    document.getElementById('topRatedList').innerHTML = topRated.length ? topRated.map(l=>`
+      <div class="list-row">
+        <div><div class="name">${escapeHtml(l.name)}</div><div class="meta">${(l.trades||[]).join(', ')}</div></div>
+        <div>${starString(laborerRating(l))}</div>
+      </div>
+    `).join('') : '<div class="empty-note">No rated laborers yet.</div>';
+
+    // Needs attention: no reviews, or inactive with no notes, or missing rate
+    const needsReview = all.filter(l => !(l.reviews||[]).length);
+    document.getElementById('needsAttentionList').innerHTML = needsReview.length ? needsReview.slice(0,6).map(l=>`
+      <div class="list-row">
+        <div><div class="name">${escapeHtml(l.name)}</div><div class="meta">No reviews on file</div></div>
+        <div class="meta">${l.status}</div>
+      </div>
+    `).join('') + (needsReview.length>6 ? `<div class="empty-note">+${needsReview.length-6} more</div>` : '') : '<div class="empty-note">Everyone has at least one review.</div>';
+  }
+
+  function renderChart(canvasId, type, chartData, extraOptions){
+    const ctx = document.getElementById(canvasId);
+    if (charts[canvasId]) charts[canvasId].destroy();
+    if (!chartData.labels.length){
+      const parent = ctx.parentElement;
+      ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);
+      return;
+    }
+    charts[canvasId] = new Chart(ctx, {
+      type,
+      data: chartData,
+      options: Object.assign({
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true }, y: { beginAtZero: true } }
+      }, extraOptions)
+    });
+  }
+
+  // ---------- Export / Import (laborer roster only — accounts live in Supabase Auth) ----------
+  document.getElementById('exportBtn').addEventListener('click', ()=>{
+    const blob = new Blob([JSON.stringify({ laborers }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'labor-pool-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById('importBtn').addEventListener('click', ()=>{
+    document.getElementById('importFile').click();
+  });
+  document.getElementById('importFile').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (parsed && Array.isArray(parsed.laborers)){
+          const rows = parsed.laborers.map(laborerToRow);
+          const { error } = await supabase.from('laborers').insert(rows);
+          if (error){ toast('Could not import: ' + error.message); return; }
+          await loadLaborers();
+          renderAll();
+          toast('Backup imported');
+        } else {
+          toast('Invalid backup file');
+        }
+      } catch(err){
+        toast('Could not read file');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // ---------- Labor Finder ----------
+  function titleKey(t){ return t.replace(/\s+/g,'_'); }
+
+  function populateFinderTradeFilter(){
+    const sel = document.getElementById('lf_trade');
+    sel.innerHTML = '<option value="">Any trade</option>' + TRADES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  }
+  function renderCrewInputs(){
+    const wrap = document.getElementById('lf_crewInputs');
+    wrap.innerHTML = TITLES.map(t => `
+      <div class="crew-input-row">
+        <span>${t}</span>
+        <input type="number" min="0" step="1" id="lf_qty_${titleKey(t)}" value="0">
+      </div>
+    `).join('');
+  }
+  function locationMatch(a, b){
+    if (!a || !b) return false;
+    a = a.toLowerCase().trim(); b = b.toLowerCase().trim();
+    if (!a || !b) return false;
+    return a.includes(b) || b.includes(a);
+  }
+  function isEligibleForProject(l, loc){
+    if (!loc) return true;
+    const local = locationMatch(l.location, loc);
+    const willingToTravel = !!(l.travel && l.travel.willing);
+    return local || willingToTravel;
+  }
+  function sortFinderCandidates(arr, loc){
+    return arr.slice().sort((a,b)=>{
+      const aLocal = loc ? (locationMatch(a.location, loc)?1:0) : 1;
+      const bLocal = loc ? (locationMatch(b.location, loc)?1:0) : 1;
+      if (aLocal !== bLocal) return bLocal - aLocal;
+      const ar = laborerRating(a) ?? -1, br = laborerRating(b) ?? -1;
+      if (ar !== br) return br - ar;
+      return (a.name||'').localeCompare(b.name||'');
+    });
+  }
+  function finderRow(l, loc){
+    const local = loc ? locationMatch(l.location, loc) : false;
+    const travels = l.travel && l.travel.willing;
+    let badge = '';
+    if (loc && local) badge = '<span class="local-badge">Local</span>';
+    else if (travels) badge = '<span class="travel-badge">Travels'+(l.travel.maxDistance? ' up to '+l.travel.maxDistance+'mi':'')+'</span>';
+    return `
+      <div class="finder-row" data-id="${l.id}">
+        <div class="fr-left">
+          <div><strong>${escapeHtml(l.name)}</strong> &mdash; ${escapeHtml(l.title)||'&mdash;'} ${badge}</div>
+          <div class="meta">${(l.trades||[]).join(', ')}${l.location? ' &middot; '+escapeHtml(l.location):''}${l.hourlyRate?' &middot; $'+l.hourlyRate.toFixed(2)+'/hr':''}</div>
+        </div>
+        <div>${starString(laborerRating(l))}</div>
+      </div>
+    `;
+  }
+  function attachFinderRowHandlers(){
+    document.querySelectorAll('#lf_results [data-id]').forEach(row => {
+      row.addEventListener('click', () => {
+        const l = laborers.find(x => x.id === row.dataset.id);
+        if (l) openModal(l);
+      });
+    });
+  }
+  function renderFinderGroup(title, need, candidates, loc, excludedCount){
+    let head = '';
+    if (need != null){
+      const ok = candidates.length >= need;
+      head = `<div class="fg-head"><h4>${escapeHtml(title)} &mdash; need ${need}</h4><span class="need-badge ${ok?'ok':'short'}">${candidates.length} of ${need} available</span></div>`;
+    } else {
+      head = `<div class="fg-head"><h4>${escapeHtml(title)}</h4></div>`;
+    }
+    const rows = candidates.length
+      ? candidates.map(l => finderRow(l, loc)).join('')
+      : '<div class="empty-note">No available laborers match.</div>';
+    const excludedNote = excludedCount > 0
+      ? `<div class="finder-excluded">+${excludedCount} more available ${escapeHtml(title)} laborer(s) exist but aren't local and aren't marked as willing to travel here.</div>`
+      : '';
+    return `<div class="card finder-group"><div>${head}${rows}${excludedNote}</div></div>`;
+  }
+  function runLaborFinder(){
+    const loc = document.getElementById('lf_location').value.trim();
+    const tradeF = document.getElementById('lf_trade').value;
+    const pool = laborers.filter(l => l.status === 'available');
+    const withTrade = tradeF ? pool.filter(l => (l.trades||[]).includes(tradeF)) : pool;
+
+    const crewNeeds = {};
+    let totalNeeded = 0;
+    TITLES.forEach(t => {
+      const el = document.getElementById('lf_qty_'+titleKey(t));
+      const val = Math.max(0, parseInt(el.value) || 0);
+      crewNeeds[t] = val;
+      totalNeeded += val;
+    });
+
+    let html = '';
+    if (totalNeeded === 0){
+      const eligible = withTrade.filter(l => isEligibleForProject(l, loc));
+      const excluded = withTrade.length - eligible.length;
+      html = renderFinderGroup('Available candidates', null, sortFinderCandidates(eligible, loc), loc, excluded);
+    } else {
+      TITLES.forEach(title => {
+        const need = crewNeeds[title];
+        if (!need) return;
+        const candidatesAll = withTrade.filter(l => l.title === title);
+        const eligibleCandidates = candidatesAll.filter(l => isEligibleForProject(l, loc));
+        const excludedCount = candidatesAll.length - eligibleCandidates.length;
+        html += renderFinderGroup(title, need, sortFinderCandidates(eligibleCandidates, loc), loc, excludedCount);
+      });
+    }
+    document.getElementById('lf_results').innerHTML = html || '<div class="empty-note">No laborers in your pool yet.</div>';
+    attachFinderRowHandlers();
+  }
+  document.getElementById('lf_findBtn').addEventListener('click', runLaborFinder);
+  document.getElementById('lf_clearBtn').addEventListener('click', () => {
+    document.getElementById('lf_project').value = '';
+    document.getElementById('lf_location').value = '';
+    document.getElementById('lf_trade').value = '';
+    TITLES.forEach(t => { document.getElementById('lf_qty_'+titleKey(t)).value = 0; });
+    document.getElementById('lf_results').innerHTML = '';
+  });
+
+  // ---------- Auth / Access control ----------
+  function roleLabel(role){ return ROLE_LABELS[role] || role; }
+  function normEmail(e){ return (e||'').trim().toLowerCase(); }
+
+  function applyRoleAccess(role){
+    const allowed = TAB_ACCESS[role] || ['dashboard'];
+    document.querySelectorAll('.tab-btn').forEach(btn=>{
+      btn.style.display = allowed.includes(btn.dataset.view) ? '' : 'none';
+    });
+    const activeBtn = document.querySelector('.tab-btn.active');
+    if (!activeBtn || !allowed.includes(activeBtn.dataset.view)){
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+      const fallback = document.querySelector('.tab-btn[data-view="dashboard"]');
+      fallback.classList.add('active');
+      document.getElementById('view-dashboard').classList.add('active');
+      renderDashboard();
+    }
+  }
+
+  function showAuthPanel(which){
+    document.getElementById('si_signinPanel').style.display = which === 'signin' ? '' : 'none';
+    document.getElementById('si_createPanel').style.display = which === 'create' ? '' : 'none';
+    document.getElementById('si_error').style.display = 'none';
+    document.getElementById('ca_error').style.display = 'none';
+  }
+  document.getElementById('si_toCreate').addEventListener('click', (e)=>{ e.preventDefault(); showAuthPanel('create'); });
+  document.getElementById('si_toSignin').addEventListener('click', (e)=>{ e.preventDefault(); showAuthPanel('signin'); });
+
+  async function finishSignIn(profile){
+    currentUser = profile;
+    document.getElementById('si_password').value = '';
+    document.getElementById('signInOverlay').classList.remove('active');
+    document.getElementById('currentUserLabel').textContent = profile.name + ' (' + roleLabel(profile.role) + ')';
+    await loadLaborers();
+    renderAll();
+    applyRoleAccess(profile.role);
+  }
+
+  // After Supabase Auth succeeds, look up the profiles row for this user.
+  // If none exists, the email was never invited (or was later revoked) — sign back out.
+  async function resolveSessionOrReject(errElId){
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (!profile){
+      await supabase.auth.signOut();
+      const errEl = document.getElementById(errElId);
+      errEl.textContent = "This account isn't authorized. Ask an admin to invite your email under Access.";
+      errEl.style.display = 'block';
+      return null;
+    }
+    return profile;
+  }
+
+  document.getElementById('si_submit').addEventListener('click', signIn);
+  document.getElementById('si_password').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') signIn(); });
+  async function signIn(){
+    const email = normEmail(document.getElementById('si_email').value);
+    const pw = document.getElementById('si_password').value;
+    const errEl = document.getElementById('si_error');
+    errEl.style.display = 'none';
+    if (!email || !pw){ errEl.textContent = 'Enter your email and password.'; errEl.style.display = 'block'; return; }
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
+    if (error){
+      errEl.textContent = 'Incorrect email or password. Try again.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const profile = await resolveSessionOrReject('si_error');
+    if (profile) await finishSignIn(profile);
+  }
+
+  document.getElementById('ca_submit').addEventListener('click', createAccount);
+  document.getElementById('ca_confirm').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') createAccount(); });
+  async function createAccount(){
+    const errEl = document.getElementById('ca_error');
+    function showErr(msg){ errEl.textContent = msg; errEl.style.display = 'block'; }
+    const email = normEmail(document.getElementById('ca_email').value);
+    const name = document.getElementById('ca_name').value.trim();
+    const pw = document.getElementById('ca_password').value;
+    const cpw = document.getElementById('ca_confirm').value;
+    errEl.style.display = 'none';
+    if (!email || !email.includes('@')){ showErr('Enter a valid email.'); return; }
+    if (!name){ showErr('Enter your name.'); return; }
+    if (pw.length < 6){ showErr('Password must be at least 6 characters.'); return; }
+    if (pw !== cpw){ showErr('Passwords do not match.'); return; }
+    const { data, error } = await supabase.auth.signUp({ email, password: pw, options: { data: { name } } });
+    if (error){ showErr(error.message); return; }
+    if (!data.session){ showErr('Check your email to confirm your account, then sign in.'); return; }
+    const profile = await resolveSessionOrReject('ca_error');
+    if (!profile) return;
+    document.getElementById('ca_name').value = '';
+    document.getElementById('ca_password').value = '';
+    document.getElementById('ca_confirm').value = '';
+    showAuthPanel('signin');
+    await finishSignIn(profile);
+    toast('Account created');
+  }
+
+  document.getElementById('switchUserBtn').addEventListener('click', async ()=>{
+    await supabase.auth.signOut();
+    currentUser = null;
+    laborers = []; invites = []; profiles = [];
+    document.getElementById('si_email').value = '';
+    document.getElementById('si_password').value = '';
+    showAuthPanel('signin');
+    document.getElementById('signInOverlay').classList.add('active');
+  });
+
+  // ---------- Access tab: invites + active accounts (admin only) ----------
+  let editingInviteId = null;
+  function openInviteModal(invite){
+    editingInviteId = invite ? invite.id : null;
+    document.getElementById('inviteModalTitle').textContent = invite ? 'Edit Invite' : 'Invite by email';
+    document.getElementById('inv_email').value = invite ? invite.email : '';
+    document.getElementById('inv_role').value = invite ? invite.role : 'superintendent';
+    document.getElementById('deleteInviteBtn').style.display = invite ? 'inline-block' : 'none';
+    document.getElementById('inviteModalOverlay').classList.add('active');
+  }
+  function closeInviteModal(){
+    document.getElementById('inviteModalOverlay').classList.remove('active');
+    editingInviteId = null;
+  }
+  document.getElementById('addInviteBtn').addEventListener('click', ()=>openInviteModal(null));
+  document.getElementById('closeInviteModal').addEventListener('click', closeInviteModal);
+  document.getElementById('cancelInviteBtn').addEventListener('click', closeInviteModal);
+  document.getElementById('inviteModalOverlay').addEventListener('click', (e)=>{ if (e.target.id==='inviteModalOverlay') closeInviteModal(); });
+
+  document.getElementById('saveInviteBtn').addEventListener('click', async ()=>{
+    const email = normEmail(document.getElementById('inv_email').value);
+    const role = document.getElementById('inv_role').value;
+    if (!email || !email.includes('@')){ toast('Enter a valid email'); return; }
+    if (profiles.some(u => normEmail(u.email) === email)){ toast('That email already has an account'); return; }
+    let error;
+    if (editingInviteId){
+      ({ error } = await supabase.from('invites').update({ email, role }).eq('id', editingInviteId));
+    } else {
+      ({ error } = await supabase.from('invites').insert({ email, role }));
+    }
+    if (error){ toast(error.code === '23505' ? 'That email is already invited' : 'Could not save: ' + error.message); return; }
+    closeInviteModal();
+    await renderAccessTab();
+    toast('Saved');
+  });
+  document.getElementById('deleteInviteBtn').addEventListener('click', async ()=>{
+    if (!editingInviteId) return;
+    const { error } = await supabase.from('invites').delete().eq('id', editingInviteId);
+    if (error){ toast('Could not remove invite: ' + error.message); return; }
+    closeInviteModal();
+    await renderAccessTab();
+    toast('Invite removed');
+  });
+
+  let editingUserId = null;
+  function openUserModal(user){
+    editingUserId = user.id;
+    document.getElementById('u_name').value = user.name;
+    document.getElementById('u_email').value = user.email;
+    document.getElementById('u_role').value = user.role;
+    document.getElementById('userModalOverlay').classList.add('active');
+  }
+  function closeUserModal(){
+    document.getElementById('userModalOverlay').classList.remove('active');
+    editingUserId = null;
+  }
+  document.getElementById('closeUserModal').addEventListener('click', closeUserModal);
+  document.getElementById('cancelUserBtn').addEventListener('click', closeUserModal);
+  document.getElementById('userModalOverlay').addEventListener('click', (e)=>{ if (e.target.id==='userModalOverlay') closeUserModal(); });
+
+  document.getElementById('saveUserBtn').addEventListener('click', async ()=>{
+    if (!editingUserId) return;
+    const name = document.getElementById('u_name').value.trim();
+    const role = document.getElementById('u_role').value;
+    if (!name){ toast('Name is required'); return; }
+    if (currentUser && editingUserId === currentUser.id && role !== currentUser.role){
+      toast("You can't change your own role while signed in");
+      return;
+    }
+    const { error } = await supabase.from('profiles').update({ name, role }).eq('id', editingUserId);
+    if (error){ toast('Could not save: ' + error.message); return; }
+    if (currentUser && editingUserId === currentUser.id){
+      currentUser = Object.assign({}, currentUser, { name, role });
+      document.getElementById('currentUserLabel').textContent = currentUser.name + ' (' + roleLabel(currentUser.role) + ')';
+    }
+    closeUserModal();
+    await renderAccessTab();
+    toast('Saved');
+  });
+  document.getElementById('deleteUserBtn').addEventListener('click', async ()=>{
+    if (!editingUserId) return;
+    if (currentUser && editingUserId === currentUser.id){
+      toast("You can't revoke your own access while signed in");
+      return;
+    }
+    const target = profiles.find(u => u.id === editingUserId);
+    const remainingAdmins = profiles.filter(u => u.role === 'admin' && u.id !== editingUserId).length;
+    if (target && target.role === 'admin' && remainingAdmins === 0){
+      toast('At least one Admin must remain');
+      return;
+    }
+    const { error } = await supabase.from('profiles').delete().eq('id', editingUserId);
+    if (error){ toast('Could not revoke access: ' + error.message); return; }
+    closeUserModal();
+    await renderAccessTab();
+    toast('Access revoked (their login still exists in Supabase Auth — remove it there too if needed)');
+  });
+
+  async function renderAccessTab(){
+    await loadInvitesAndProfiles();
+    const inviteBody = document.getElementById('invitesTableBody');
+    if (inviteBody){
+      inviteBody.innerHTML = invites.length ? invites.map(i => `
+        <tr data-id="${i.id}">
+          <td>${escapeHtml(i.email)}</td>
+          <td><span class="badge ${i.role}">${roleLabel(i.role)}</span></td>
+          <td class="meta">Awaiting sign-up</td>
+        </tr>
+      `).join('') : '<tr><td colspan="3" class="empty-note">No pending invites.</td></tr>';
+      inviteBody.querySelectorAll('tr[data-id]').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const i = invites.find(x => x.id === tr.dataset.id);
+          if (i) openInviteModal(i);
+        });
+      });
+    }
+    const body = document.getElementById('usersTableBody');
+    if (body){
+      body.innerHTML = profiles.map(u => `
+        <tr data-id="${u.id}">
+          <td>${escapeHtml(u.name)}${currentUser && u.id===currentUser.id ? ' <span class="meta">(you)</span>' : ''}</td>
+          <td>${escapeHtml(u.email)||'&mdash;'}</td>
+          <td><span class="badge ${u.role}">${roleLabel(u.role)}</span></td>
+        </tr>
+      `).join('');
+      body.querySelectorAll('tr').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const u = profiles.find(x => x.id === tr.dataset.id);
+          if (u) openUserModal(u);
+        });
+      });
+    }
+  }
+
+  // ---------- Init ----------
+  function renderAll(){
+    renderTable();
+    renderDashboard();
+  }
+  populateTradeFilter();
+  populateFinderTradeFilter();
+  renderCrewInputs();
+  showAuthPanel('signin');
+
+  (async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session){
+      const profile = await resolveSessionOrReject('si_error');
+      if (profile){ await finishSignIn(profile); return; }
+    }
+    renderAll();
+  })();
+})();
+</script>
+</body>
+</html>
