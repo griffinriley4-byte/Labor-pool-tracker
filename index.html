@@ -457,6 +457,7 @@
 
     <div class="form-grid">
       <div class="field"><label>Name *</label><input type="text" id="f_name"></div>
+      <div class="field"><label>Simpson Rep</label><select id="f_addedBy"></select></div>
       <div class="field"><label>Phone</label><input type="text" id="f_phone"></div>
       <div class="field"><label>Email</label><input type="text" id="f_email"></div>
       <div class="field"><label>Location (city, state)</label><input type="text" id="f_location"></div>
@@ -636,13 +637,19 @@
       history: l.history,
       reviews: l.reviews,
       notes: l.notes,
-      date_added: l.dateAdded
+      date_added: l.dateAdded,
+      added_by_name: l.addedByName || null
     };
   }
   async function loadLaborers(){
     const { data: rows, error } = await supabase.from('laborers').select('*').order('name');
     if (error){ toast('Could not load laborers: ' + error.message); return; }
     laborers = (rows || []).map(rowToLaborer);
+  }
+  async function loadProfiles(){
+    const { data: rows, error } = await supabase.from('profiles').select('*').order('name');
+    if (error){ toast('Could not load reps: ' + error.message); return; }
+    profiles = rows || [];
   }
   async function loadInvitesAndProfiles(){
     const [{ data: inviteRows, error: inviteErr }, { data: profileRows, error: profileErr }] = await Promise.all([
@@ -727,6 +734,14 @@
     return Array.from(document.querySelectorAll('#tradeChecks label.checked')).map(l => l.dataset.trade);
   }
 
+  function renderRepDropdown(selectedName){
+    const sel = document.getElementById('f_addedBy');
+    const names = profiles.map(p => p.name);
+    if (selectedName && !names.includes(selectedName)) names.push(selectedName);
+    sel.innerHTML = '<option value="">&mdash;</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    sel.value = selectedName || (currentUser ? currentUser.name : '');
+  }
+
   document.getElementById('f_travel').addEventListener('change', (e) => {
     document.getElementById('f_travelDistWrap').style.display = e.target.value === 'yes' ? 'flex' : 'none';
   });
@@ -738,6 +753,7 @@
     document.getElementById('deleteBtn').style.display = laborer ? 'inline-block' : 'none';
 
     document.getElementById('f_name').value = laborer ? laborer.name : '';
+    renderRepDropdown(laborer ? laborer.addedByName : '');
     document.getElementById('f_phone').value = laborer ? laborer.phone||'' : '';
     document.getElementById('f_email').value = laborer ? laborer.email||'' : '';
     document.getElementById('f_location').value = laborer ? laborer.location||'' : '';
@@ -898,12 +914,10 @@
       history: workingJobs,
       reviews: workingReviews,
       notes: document.getElementById('f_notes').value.trim(),
-      dateAdded: editingId ? (laborers.find(l=>l.id===editingId)||{}).dateAdded || new Date().toISOString().slice(0,10) : new Date().toISOString().slice(0,10)
+      dateAdded: editingId ? (laborers.find(l=>l.id===editingId)||{}).dateAdded || new Date().toISOString().slice(0,10) : new Date().toISOString().slice(0,10),
+      addedByName: document.getElementById('f_addedBy').value
     };
     const row = laborerToRow(laborer);
-    if (!editingId){
-      row.added_by_name = currentUser ? currentUser.name : '';
-    }
     let error;
     if (editingId){
       ({ error } = await supabase.from('laborers').update(row).eq('id', editingId));
@@ -1265,7 +1279,7 @@
     document.getElementById('si_password').value = '';
     document.getElementById('signInOverlay').classList.remove('active');
     document.getElementById('currentUserLabel').textContent = profile.name + ' (' + roleLabel(profile.role) + ')';
-    await loadLaborers();
+    await Promise.all([loadLaborers(), loadProfiles()]);
     renderAll();
     applyRoleAccess(profile.role);
   }
