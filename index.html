@@ -298,6 +298,7 @@
             <th data-sort="travel">Travel</th>
             <th data-sort="english">English</th>
             <th data-sort="lastBoss">Last Boss</th>
+            <th data-sort="addedBy">Added By</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -567,7 +568,7 @@
 
 <script>
 (function(){
-  const TRADES = ['Plastering','Stucco','Drywall','Framing','Painting','Masonry','Concrete','Electrical','Plumbing','HVAC','Roofing','Carpentry','Insulation','General Labor'];
+  const TRADES = ['Plastering','Stucco','Drywall','Framing','Painting','Masonry','Concrete','Electrical','Plumbing','HVAC','Roofing','Carpentry','Insulation','General Labor','General Waterproofing','Deck Coating','Sealant','Expansion Joints'];
   const TITLES = ['Sub Boss','Foreman','Skilled Laborer','General Laborer'];
   const ROLE_LABELS = { admin: 'Admin', pm_gs: 'PM / General Superintendent', superintendent: 'Superintendent' };
   const TAB_ACCESS = {
@@ -613,7 +614,8 @@
       history: r.history || [],
       reviews: r.reviews || [],
       notes: r.notes || '',
-      dateAdded: r.date_added
+      dateAdded: r.date_added,
+      addedByName: r.added_by_name || ''
     };
   }
   function laborerToRow(l){
@@ -899,6 +901,9 @@
       dateAdded: editingId ? (laborers.find(l=>l.id===editingId)||{}).dateAdded || new Date().toISOString().slice(0,10) : new Date().toISOString().slice(0,10)
     };
     const row = laborerToRow(laborer);
+    if (!editingId){
+      row.added_by_name = currentUser ? currentUser.name : '';
+    }
     let error;
     if (editingId){
       ({ error } = await supabase.from('laborers').update(row).eq('id', editingId));
@@ -955,6 +960,7 @@
         case 'travel': av = a.travel && a.travel.willing ? 1:0; bv = b.travel && b.travel.willing ? 1:0; break;
         case 'english': av = a.speaksEnglish?1:0; bv = b.speaksEnglish?1:0; break;
         case 'lastBoss': av = (a.lastBoss&&a.lastBoss.name)||''; bv=(b.lastBoss&&b.lastBoss.name)||''; break;
+        case 'addedBy': av = a.addedByName||''; bv = b.addedByName||''; break;
         default: av = (a[key]||''); bv = (b[key]||'');
       }
       if (typeof av === 'string') av = av.toLowerCase();
@@ -981,6 +987,7 @@
         <td>${l.travel && l.travel.willing ? 'Yes'+(l.travel.maxDistance?' ('+l.travel.maxDistance+'mi)':'') : 'No'}</td>
         <td>${l.speaksEnglish ? 'Yes' : 'No'}</td>
         <td>${escapeHtml(l.lastBoss && l.lastBoss.name)||'&mdash;'}</td>
+        <td>${escapeHtml(l.addedByName)||'&mdash;'}</td>
       </tr>
     `).join('');
     body.querySelectorAll('tr').forEach(tr=>{

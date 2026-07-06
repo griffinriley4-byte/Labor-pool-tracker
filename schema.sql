@@ -37,8 +37,12 @@ create table if not exists public.laborers (
   reviews jsonb not null default '[]',
   notes text,
   date_added date not null default current_date,
+  added_by_name text,
   created_at timestamptz not null default now()
 );
+
+-- Safe to re-run: adds the column if this table already existed without it.
+alter table public.laborers add column if not exists added_by_name text;
 
 -- ---------- Helper functions (security definer so they can read profiles regardless of RLS) ----------
 
