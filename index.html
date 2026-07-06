@@ -252,6 +252,10 @@
         <div id="needsAttentionList"></div>
       </div>
     </div>
+    <div class="card" style="margin-bottom:20px;">
+      <h3>Rep Scoreboard &mdash; laborers entered</h3>
+      <div id="repScoreboardList"></div>
+    </div>
   </div>
 
   <div class="view" id="view-laborers">
@@ -1104,6 +1108,20 @@
         <div class="meta">${l.status}</div>
       </div>
     `).join('') + (needsReview.length>6 ? `<div class="empty-note">+${needsReview.length-6} more</div>` : '') : '<div class="empty-note">Everyone has at least one review.</div>';
+
+    // Rep Scoreboard: how many laborers each Simpson rep has entered
+    const repCounts = {};
+    all.forEach(l => {
+      const rep = l.addedByName;
+      if (rep) repCounts[rep] = (repCounts[rep]||0) + 1;
+    });
+    const repRows = Object.keys(repCounts).sort((a,b)=>repCounts[b]-repCounts[a]);
+    document.getElementById('repScoreboardList').innerHTML = repRows.length ? repRows.map((rep,i)=>`
+      <div class="list-row">
+        <div><div class="name">${i+1}. ${escapeHtml(rep)}</div></div>
+        <div class="meta">${repCounts[rep]} laborer${repCounts[rep]===1?'':'s'}</div>
+      </div>
+    `).join('') : '<div class="empty-note">No laborers have a rep on file yet.</div>';
   }
 
   function renderChart(canvasId, type, chartData, extraOptions){
