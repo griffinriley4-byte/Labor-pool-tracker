@@ -1307,7 +1307,13 @@
   async function resolveSessionOrReject(errElId){
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    let { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (!profile){
+      // No profile yet — maybe they signed up before an admin invited them.
+      // Re-check for a pending invite now and claim it if one exists.
+      const { data: claimed } = await supabase.rpc('claim_invite');
+      profile = claimed || null;
+    }
     if (!profile){
       await supabase.auth.signOut();
       const errEl = document.getElementById(errElId);

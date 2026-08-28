@@ -83,6 +83,41 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- ---------- Self-heal: claim a pending invite after the fact ----------
+-- Handles the case where someone signed up BEFORE being invited (so the trigger
+-- above found no invite at insert time), and an admin invited them afterward.
+-- The client calls this after a sign-in/sign-up that comes back with no profile,
+-- so the pending invite still gets claimed instead of leaving them stuck forever.
+
+create or replace function public.claim_invite()
+returns public.profiles
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := auth.uid();
+  uemail text;
+  uname text;
+  matched_role text;
+  result public.profiles;
+begin
+  if uid is null then
+    raise exception 'Not authenticated';
+  end if;
+  select email, raw_user_meta_data->>'name' into uemail, uname from auth.users where id = uid;
+  select role into matched_role from public.invites where lower(email) = lower(uemail) limit 1;
+  if matched_role is null then
+    raise exception 'No invite found for this email';
+  end if;
+  insert into public.profiles (id, name, email, role)
+  values (uid, coalesce(uname, split_part(uemail,'@',1)), uemail, matched_role)
+  on conflict (id) do nothing;
+  delete from public.invites where lower(email) = lower(uemail);
+  select * into result from public.profiles where id = uid;
+  return result;
+end;
+$$;
+
+grant execute on function public.claim_invite() to authenticated;
+
 -- Seed the first admin invite so whoever signs up with this email becomes Admin.
 -- Change the email below if the first admin should be someone else.
 insert into public.invites (email, role)
