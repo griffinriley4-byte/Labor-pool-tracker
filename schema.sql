@@ -38,11 +38,13 @@ create table if not exists public.laborers (
   notes text,
   date_added date not null default current_date,
   added_by_name text,
+  crew_size integer,
   created_at timestamptz not null default now()
 );
 
 -- Safe to re-run: adds the column if this table already existed without it.
 alter table public.laborers add column if not exists added_by_name text;
+alter table public.laborers add column if not exists crew_size integer;
 
 -- ---------- Helper functions (security definer so they can read profiles regardless of RLS) ----------
 

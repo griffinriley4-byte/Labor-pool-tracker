@@ -494,6 +494,10 @@
           <option value="General Laborer">General Laborer</option>
         </select>
       </div>
+      <div class="field" id="f_crewWrap" style="display:none;">
+        <label>Crew size &mdash; total guys he can get us (incl. himself)</label>
+        <input type="number" min="1" step="1" id="f_crewSize" placeholder="e.g. 12">
+      </div>
     </div>
 
     <div class="form-grid full">
@@ -613,6 +617,7 @@
       lastBoss: { name: r.last_boss_name || '', type: r.last_boss_type || 'company' },
       status: r.status,
       title: r.title,
+      crewSize: r.crew_size,
       speaksEnglish: r.speaks_english,
       travel: { willing: r.travel_willing, maxDistance: r.travel_max_distance },
       trades: r.trades || [],
@@ -634,6 +639,8 @@
       last_boss_type: l.lastBoss.type,
       status: l.status,
       title: l.title,
+      // only send crew_size for sub bosses; other titles leave the column untouched
+      ...(l.title === 'Sub Boss' ? { crew_size: l.crewSize } : {}),
       speaks_english: l.speaksEnglish,
       travel_willing: l.travel.willing,
       travel_max_distance: l.travel.maxDistance,
@@ -644,6 +651,14 @@
       date_added: l.dateAdded,
       added_by_name: l.addedByName || null
     };
+  }
+  // A Sub Boss counts as everyone he can get us (crew size, incl. himself); everyone else counts as 1.
+  function headcount(l){
+    return (l.title === 'Sub Boss' && l.crewSize > 0) ? l.crewSize : 1;
+  }
+  function totalHeadcount(arr){ return arr.reduce((n,l)=>n+headcount(l),0); }
+  function syncCrewField(){
+    document.getElementById('f_crewWrap').style.display = document.getElementById('f_title').value === 'Sub Boss' ? 'flex' : 'none';
   }
   async function loadLaborers(){
     const { data: rows, error } = await supabase.from('laborers').select('*').order('name');
@@ -746,6 +761,7 @@
     sel.value = selectedName || (currentUser ? currentUser.name : '');
   }
 
+  document.getElementById('f_title').addEventListener('change', syncCrewField);
   document.getElementById('f_travel').addEventListener('change', (e) => {
     document.getElementById('f_travelDistWrap').style.display = e.target.value === 'yes' ? 'flex' : 'none';
   });
@@ -766,6 +782,8 @@
     document.getElementById('f_lastBossType').value = laborer && laborer.lastBoss ? laborer.lastBoss.type : 'company';
     document.getElementById('f_status').value = laborer ? laborer.status : 'available';
     document.getElementById('f_title').value = laborer ? (laborer.title || 'General Laborer') : 'General Laborer';
+    document.getElementById('f_crewSize').value = laborer && laborer.crewSize ? laborer.crewSize : '';
+    syncCrewField();
     document.getElementById('f_english').value = laborer ? (laborer.speaksEnglish ? 'yes':'no') : 'yes';
     document.getElementById('f_travel').value = laborer && laborer.travel && laborer.travel.willing ? 'yes' : 'no';
     document.getElementById('f_travelDist').value = laborer && laborer.travel ? laborer.travel.maxDistance || '' : '';
@@ -909,6 +927,7 @@
       },
       status: document.getElementById('f_status').value,
       title: document.getElementById('f_title').value,
+      crewSize: parseInt(document.getElementById('f_crewSize').value) || null,
       speaksEnglish: document.getElementById('f_english').value === 'yes',
       travel: {
         willing: travelWilling,
@@ -991,12 +1010,12 @@
   function renderTable(){
     let rows = sortRows(getFiltered());
     const body = document.getElementById('tableBody');
-    document.getElementById('resultCount').textContent = rows.length + ' of ' + laborers.length + ' laborers';
+    document.getElementById('resultCount').textContent = rows.length + ' of ' + laborers.length + ' entries \u00b7 ' + totalHeadcount(rows) + ' laborers incl. crews';
     document.getElementById('emptyState').style.display = laborers.length ? 'none' : 'block';
     body.innerHTML = rows.map(l => `
       <tr data-id="${l.id}">
         <td><strong>${escapeHtml(l.name)}</strong></td>
-        <td>${escapeHtml(l.title)||'&mdash;'}</td>
+        <td>${escapeHtml(l.title)||'&mdash;'}${l.title==='Sub Boss' && l.crewSize ? ' <span class="meta">&middot; crew of '+l.crewSize+'</span>' : ''}</td>
         <td>${(l.trades||[]).map(t=>`<span class="trade-tag">${escapeHtml(t)}</span>`).join('')}</td>
         <td><span class="badge ${l.status}">${l.status}</span></td>
         <td>${starString(laborerRating(l))}</td>
@@ -1050,8 +1069,8 @@
     }).length;
 
     const kpis = [
-      { label: 'Total in pool', value: all.length, sub: available.length+' available' },
-      { label: 'Actively working', value: active.length, sub: all.length? Math.round(100*active.length/all.length)+'% of pool':'' },
+      { label: 'Total in pool', value: totalHeadcount(all), sub: totalHeadcount(available)+' available \u00b7 '+all.length+' profiles' },
+      { label: 'Actively working', value: totalHeadcount(active), sub: all.length? Math.round(100*totalHeadcount(active)/totalHeadcount(all))+'% of pool':'' },
       { label: 'Active pool avg rating', value: activeAvgRating!=null ? activeAvgRating.toFixed(1)+' ★' : '—', sub: 'overall pool: '+(overallAvgRating!=null?overallAvgRating.toFixed(1)+' ★':'—') },
       { label: 'Avg rate (active)', value: activeAvgRate!=null ? '$'+activeAvgRate.toFixed(2)+'/hr' : '—', sub: 'currently working laborers' },
       { label: 'Speak English', value: englishPct+'%', sub: 'of full pool' },
@@ -1190,7 +1209,7 @@
     return `
       <div class="finder-row" data-id="${l.id}">
         <div class="fr-left">
-          <div><strong>${escapeHtml(l.name)}</strong> &mdash; ${escapeHtml(l.title)||'&mdash;'} ${badge}</div>
+          <div><strong>${escapeHtml(l.name)}</strong> &mdash; ${escapeHtml(l.title)||'&mdash;'}${l.title==='Sub Boss' && l.crewSize ? ' (crew of '+l.crewSize+')' : ''} ${badge}</div>
           <div class="meta">${(l.trades||[]).join(', ')}${l.location? ' &middot; '+escapeHtml(l.location):''}${l.hourlyRate?' &middot; $'+l.hourlyRate.toFixed(2)+'/hr':''}</div>
         </div>
         <div>${starString(laborerRating(l))}</div>
