@@ -1132,7 +1132,7 @@
     const repCounts = {};
     all.forEach(l => {
       const rep = l.addedByName;
-      if (rep) repCounts[rep] = (repCounts[rep]||0) + 1;
+      if (rep) repCounts[rep] = (repCounts[rep]||0) + headcount(l);
     });
     const repRows = Object.keys(repCounts).sort((a,b)=>repCounts[b]-repCounts[a]);
     document.getElementById('repScoreboardList').innerHTML = repRows.length ? repRows.map((rep,i)=>`
